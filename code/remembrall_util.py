@@ -1,7 +1,10 @@
 import os
-
+from nltk.stem import SnowballStemmer
 config_dict={}
 
+stemmer = SnowballStemmer(language="english")
+def normalize_and_stem(word):
+    return stemmer.stem(word.lower())
 
 def read_os_environment_parameters():
     for variable_key in os.environ:
@@ -14,7 +17,6 @@ def read_config_file():
     # try:
     with open(config_file_path) as f:
         for line in f:
-
             if line is not None and line.strip() != "":
                 config_dict[line.strip().split("=")[0]] = \
                     line.strip().split("=")[1]
@@ -36,8 +38,7 @@ def load_saved_response_known_qa():
                 known_qa_dict[line.split("=")[0].lower()] = line.split("=")[1]
     except Exception, e:
         print str(e)
-        print "Error!"
-        print "Could not load saved known qa"
+        print "Error! Could not load saved known qa"
     return known_qa_dict
 
 
@@ -52,13 +53,12 @@ def load_bot_specific_questions():
                 bot_specifc_questions.append(line.strip())
     except Exception, e:
         print str(e)
-        print "Error!"
-        print "Could not load bot specific questions"
+        print "Error! Could not load bot specific questions"
     return bot_specifc_questions
 
 def load_saved_response_messages():
     response_messages = dict()
-    message_types = ['A', 'C', 'T', 'I', 'B']
+    message_types = ['A', 'C', 'T', 'I', 'B', 'G']
     for message_type in message_types:
         response_file_path = os.path.join(
             config_dict['PARENT_DIR'],
@@ -70,16 +70,17 @@ def load_saved_response_messages():
                     line = line.strip()
                     if line != "":
                         response_list.append(line)
-            #print "Response list", response_list
             response_messages[message_type] = response_list
         except:
-            print "Error!"
-            print "Could not load saved messages error!"
+            print "Error! Could not load saved messages error!"
+
+            #default messages
             response_messages['A'] = ["Alright, I'll remember that!"]
             response_messages['C'] = ["Thank you :)"]
             response_messages['I'] = ["I'm sorry, I do not follow. Could you "
                                       "please rephrase?"]
             response_messages['T'] = ["You're welcome :)"]
+            response_messages['G'] = ["Hello :)"]
             return response_messages
     return response_messages
 
