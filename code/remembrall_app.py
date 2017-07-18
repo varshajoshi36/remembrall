@@ -1,4 +1,5 @@
 from flask import Flask, request
+from flask import send_from_directory
 from remembrall_core import Message, BestMatcher
 import os
 import json
@@ -8,6 +9,14 @@ import logging as log
 
 app = Flask(__name__)
 config_dict = remembrall_util.get_configs()
+
+
+@app.route('/privacy/', methods=['GET'])
+def return_privacy_page():
+    print "In here"
+    static_dir = config_dict['PARENT_DIR'] + '/static'
+    print static_dir
+    return send_from_directory(directory=static_dir, filename='remembrall_privacy.html')
 
 
 @app.route('/', methods=['GET'])
@@ -30,7 +39,7 @@ def read_respond_messages():
         print "Incoming from %s: %s" % (usr_id, message_text)
         msg = Message(message_text=message_text, usr_id=usr_id)
         #msg.identify_rule_based()
-        msg.identify_classifier_based()
+        msg.identify_message_type()
         msg.insert_in_log_table()
         print msg.message_type
         #T=Thanks
@@ -38,7 +47,8 @@ def read_respond_messages():
         #C=compliment
         #K=known QA
         #B=bot specific question
-        if msg.message_type in {'T', 'I', 'C', 'K', 'B'}:
+        #N=invalid
+        if msg.message_type in {'T', 'I', 'C', 'K', 'B', 'N'}:
             try:
                 response_message_text=msg.get_response_message()
             except LookupError:
@@ -49,6 +59,7 @@ def read_respond_messages():
 
         else:
             response_message_text = msg.remember()
+        print "Now calling send message: "
         send_message(config_dict['PAGE_ACCESS_TOKEN'],
                      usr_id,
                      response_message_text)
@@ -71,7 +82,7 @@ def messaging_events(payload):
 def send_message(token, recipient, text):
   """Send the message text to recipient with id recipient.
   """
-
+  print "Sending Message: ", text, "recipient: " + recipient
   r = requests.post("https://graph.facebook.com/v2.6/me/messages",
     params={"access_token": token},
     data=json.dumps({
@@ -81,7 +92,6 @@ def send_message(token, recipient, text):
     headers={'Content-type': 'application/json'})
   if r.status_code != requests.codes.ok:
     print r.text
-
 
 
 

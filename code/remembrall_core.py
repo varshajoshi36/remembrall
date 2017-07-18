@@ -1,7 +1,7 @@
 import nltk
 from fuzzywuzzy import fuzz
 from remembrall_db_helper import PostgresHelper
-from remembrall_msg_type_classifier import MessageClassifier
+import remembrall_rule_engine
 import logging as log
 import re
 
@@ -12,13 +12,13 @@ import remembrall_util
 
 config_dict = remembrall_util.get_configs()
 response_dict = remembrall_util.load_saved_response_messages()
-known_qa_dict = remembrall_util.load_saved_response_known_qa()
 bot_specific_question_phrases = remembrall_util.load_bot_specific_questions()
 
-greeting_set = {'hi','hey','hello'}
-day_time_set = {"morning", "afternoon", "evening", "night", "noon"}
+
+known_qa_dict = remembrall_rule_engine.known_qa_dict
 q_set = {"why", "what", "when", "who", "where", "how", "which"}
-thank_set = {"thank you!", "thanks!", "thanks", "thank you"}
+
+ruleEngine = remembrall_rule_engine.RuleEngine()
 
 class BestMatcher(object):
 
@@ -68,6 +68,16 @@ class BestMatcher(object):
             self.confident = 0
         return self.result_dict[self.max_total_score_id]
 
+class MessageTexts(object):
+
+    def __init__(self, message_text, normalized_message, tokenized_message, normalized_tokens):
+
+        self.message_text = message_text
+        self.normalized_message = normalized_message
+        self.tokenized_message = tokenized_message
+        self.normalized_tokens = normalized_tokens
+
+
 
 class Message(object):
     def __init__(self, message_text, usr_id):
@@ -81,6 +91,8 @@ class Message(object):
         self.insert_dict_list = list()
         self.message_type = "A"
         self.message_id = 0
+        self.messagetexts = MessageTexts(self.message_text, self.normalized_message, self.tokenized_message, self.normalized_tokens)
+
 
     def remove_bot_specific_words(self):
         pass
@@ -99,47 +111,20 @@ class Message(object):
                 if token.lower() in q_set:
                     self.message_type = "Q"
 
-    def check_for_greeting(self):
-        for token in self.tokenized_message:
-            if token.lower() in greeting_set:
-                return True
-        if "good" in self.normalized_tokens and len(self.normalized_tokens) < 4:
-            for token in self.normalized_tokens:
-                if token in day_time_set:
-                    return True
-        return False
-
-    def identify_classifier_based(self):
-
-        print "normalized_msg_text", self.normalized_message,
-
-        if self.check_for_greeting() is True:
-            self.message_type = 'G'
-
-        elif len(self.message_text) < 3:
-            self.message_type = "I"
-
-        elif self.message_text.lower() in thank_set:
-            self.message_type = "T"
-
-        elif self.normalized_message in known_qa_dict:
-            self.message_type = 'K'
-
-        else:
-            for bot_spec_phrase in bot_specific_question_phrases:
-                if self.normalized_message.startswith(bot_spec_phrase):
-                    self.message_type = 'B'
-                    return
-
-            msg_classifier = MessageClassifier()
-            self.message_type = msg_classifier.predict_message_type(
-                self.message_text)
+    def identify_message_type(self):
+        self.message_type = ruleEngine.apply_rules(self.messagetexts)
 
     def get_response_message(self):
-        if self.message_type in {'A', 'T', 'C', 'I', 'B', 'G'}:
+        if self.message_type in {'A', 'T', 'C', 'I', 'B', 'G', 'N'}:
             return random.choice(response_dict[self.message_type])
+        elif self.message_type == "K":
+            if self.normalized_message in known_qa_dict:
+                return known_qa_dict[self.normalized_message]
+            else:
+                return known_qa_dict[self.message_text]
+
         else:
-            return known_qa_dict[self.normalized_message]
+            return random.choice(response_dict[self.A])
 
     def insert_in_log_table(self):
         postgres = PostgresHelper()
@@ -157,6 +142,9 @@ class Message(object):
         postgres.con.close()
 
     def construct_remember_dict_list(self):
+        if len(self.verbs) == 0:
+            self.verbs.append("V")
+
         for n in self.nouns:
             for v in self.verbs:
                 index_dict = dict()
@@ -174,19 +162,20 @@ class Message(object):
     def tag_pos(self):
         text = self.tokenized_message
         tagged = nltk.pos_tag(text)
+        print "tagged", tagged
 
         for tag in tagged:
             if tag[1][0] == 'N' or tag[1] == 'PRP' or tag[1] == 'DT':
                 n = remembrall_util.normalize_and_stem(tag[0])
                 self.nouns.append(n)
-            elif tag[1][0] == 'V':
+            elif tag[1][0] == 'V' or tag[1][0] == 'VBP' or tag[1][0] == 'VB':
                 v = remembrall_util.normalize_and_stem(tag[0])
                 self.verbs.append(v)
 
     def rephrase_answer(self, best_match_message):
         #rules to rephrase the answer
         best_match_message = best_match_message.replace("My", "Your")\
-            .replace("my", "your").replace("I", "You")
+            .replace("my", "your").replace("I ", "You")
 
         return best_match_message
 
@@ -211,7 +200,9 @@ class Message(object):
     def seek(self):
         postgres = PostgresHelper()
         self.tag_pos()
-        print self.nouns
+
+        print "Nouns:", self.nouns
+        print "Verbs", self.verbs
         if len(self.nouns) == 0:
             print "Sorry, I cannot understand"
             return "Sorry, I cannot understand"
@@ -250,9 +241,9 @@ if __name__ == '__main__':
         msg = Message(text,"urjit")
         #msg.identify_rule_based()
 
-        msg.identify_classifier_based()
+        msg.identify_message_type()
         msg.insert_in_log_table()
-        if msg.message_type in {'T', 'I', 'C', 'K', 'B', 'G'}:
+        if msg.message_type in {'T', 'I', 'C', 'K', 'B', 'G', 'N'}:
             try:
                 response_message_text=msg.get_response_message()
             except LookupError, e:
